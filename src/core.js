@@ -16,8 +16,10 @@ const $tfile = function(filePath) {
 
 class EasyTaskManager {
   #taskManager;
+  #retVal = undefined;
   constructor(taskManager) {
     this.#taskManager = taskManager;
+    this.doOnReturn((retVal) => this.#retVal = retVal);
   }
 
   doOnReturn(callback) {
@@ -32,9 +34,16 @@ class EasyTaskManager {
     this.#taskManager.doOnExit(callback);
   }
 
-  // async waitForFinish() {
-  //   //not yet implemented
-  // }
+  async waitForFinish() {
+    if(!this.getIsFinished()) {
+      return new Promise((resolve, reject) => {
+        this.doOnReturn((retVal) => resolve(retVal));
+        this.doOnError((err) => reject(err));
+        this.doOnExit((code) => reject(code)); //if exiting without a return, assume an error occurred
+      });
+    }
+    return this.#retVal;
+  }
 
   getIsOnline() {
     return this.#taskManager.getIsOnline();
@@ -78,7 +87,7 @@ class TaskManager {
 
     this.#worker.on('message', data => {
       const key = Object.keys(data)[0];
-      this.#onMessageRecievedEvents[key](data[key]);
+      this.#onMessageRecievedEvents[key].forEach((callback) => callback(data[key]));
     });
   }
 
@@ -89,7 +98,11 @@ class TaskManager {
   }
 
   doOnMessageRecieved(messageName, callback) {
-    this.#onMessageRecievedEvents[messageName] = callback;
+    if(this.#onMessageRecievedEvents[messageName] !== undefined) {
+      this.#onMessageRecievedEvents[messageName].push(callback);
+    } else {
+      this.#onMessageRecievedEvents[messageName] = [callback];
+    }
   }
 
   doOnExit(callback) {
@@ -112,9 +125,15 @@ class TaskManager {
     return this.#worker;
   }
 
-  // async waitForFinish() {
-  //   //still needs to be implemented
-  // }
+  waitForFinish() {
+    if(!this.#isFinished) {
+      return new Promise((resolve, reject) => {
+        this.doOnExit((code) => resolve(code));
+        this.doOnError((err) => reject(err));
+      });
+    }
+    return this.#exitCode;
+  }
 
   getIsOnline() {
     return this.#isOnline;
@@ -159,10 +178,6 @@ class Task {
   getCode() {
     return this.#code;
   }
-
-  // static clone(task) {
-  //   return Object.assign("", task.#code);
-  // }
 }
 
 module.exports = { $t, $et, $tfile, Task };
