@@ -23,3 +23,4 @@ async function calcFib(num) {
 calcFib(40);
 calcFib(39);
 calcFib(38);
+

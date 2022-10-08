@@ -1,4 +1,4 @@
-const { $t, Task } = require('../src/core');
+const { $t, $et, Task } = require('../src/core');
 
 const myTaskCode = function getFib(num) {
   // console.log(`here ${num}`)
@@ -12,6 +12,12 @@ const myTaskCode = function getFib(num) {
     return getFib(num - 1) + getFib(num - 2);
   }
 }
+
+const myEasyTask = $et([42], myTaskCode);
+
+myEasyTask.doOnReturn((retVal) => console.log(`my easy task returned: ${retVal} !!!`));
+
+// console.log
 
 const myTask = new Task(
   {
