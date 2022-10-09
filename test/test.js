@@ -1,8 +1,12 @@
 const { $t, $et, Task } = require('../src/core');
 
 const runThreadAndWait = async (thread) => {
-  const returnCode = await thread.waitForFinish();
+  const returnCode = await thread.waitForFinishOrReturnOnTimeout(3_000);
   console.log(`My thread has finished with the code: ${returnCode}`);
+}
+
+const runThreadAndWaitForMessage = async (thread, message) => {
+  thread.waitForMessageRecievedOrReturnOnTimeout(message, 10).then((response) => console.log(`My thread has returned the response: ${response}`));
 }
 
 const myTaskCode = function getFib(num) {
@@ -56,4 +60,6 @@ runThreadAndWait(myThreads[0]);
 myThreads[0].doOnExit((code) => {
   console.log(`test thread return code: ${code}`);
 });
+
+runThreadAndWaitForMessage(myThreads[1], 'response');
 

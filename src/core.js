@@ -1,64 +1,47 @@
 const worker_threads = require('node:worker_threads');
 
 const $t = function(task) {
-  return createNewTaskManager(task.getCode());
+  return new MessageTaskManager(() => new worker_threads.Worker(task.getCode(), {eval: true}));
 }
 
 const $et = function(argumentArray, method) {
   let newTaskCode = new Task(null, method).getCode();
   newTaskCode += `\nw.parentPort.postMessage({'return': ${method.name}(${argumentArray})});`;
-  return new EasyTaskManager(createNewTaskManager(newTaskCode));
+  return new EasyTaskManager(() => new worker_threads.Worker(newTaskCode, {eval: true}));
 }
 
 const $tfile = function(filePath) {
-  return new TaskManager(() => new worker_threads.Worker(filePath));
+  return new MessageTaskManager(() => new worker_threads.Worker(filePath)); //untested
 }
 
-class EasyTaskManager {
-  #taskManager;
-  #retVal = undefined;
-  constructor(taskManager) {
-    this.#taskManager = taskManager;
-    this.doOnReturn((retVal) => this.#retVal = retVal);
-  }
+const waitAll = (promiseArray) => {
 
-  doOnReturn(callback) {
-    this.#taskManager.doOnMessageRecieved('return', callback);
-  }
+}
 
-  doOnError(callback) {
-    this.#taskManager.doOnError(callback);
-  }
+const waitAny = (promiseArray) => {
 
-  doOnExit(callback) {
-    this.#taskManager.doOnExit(callback);
-  }
+}
 
-  async waitForFinish() {
-    if(!this.getIsFinished()) {
-      return new Promise((resolve, reject) => {
-        this.doOnReturn((retVal) => resolve(retVal));
-        this.doOnError((err) => reject(err));
-        this.doOnExit((code) => reject(code)); //if exiting without a return, assume an error occurred
-      });
-    }
-    return this.#retVal;
-  }
+const waitAllTasks = (taskManagerArray) => {
 
-  getIsOnline() {
-    return this.#taskManager.getIsOnline();
-  }
+}
 
-  getIsFinished() {
-    return this.#taskManager.getIsFinished();
-  }
+const waitAnyTasks = (taskManagerArray) => {
 
-  getExitCode() {
-    return this.#taskManager.getExitCode();
-  }
+}
+
+const waitOrThrowOnTimeout = (promiseObject) => {
+
+}
+
+const waitOrReturnOnTimeout = (promiseObject) => {
+  
 }
 
 class TaskManager {
+  static #aliases = {};
+  #taskAlias = undefined;
+
   #worker = undefined;
   #isOnline = false;
   #isFinished = false;
@@ -91,12 +74,6 @@ class TaskManager {
     });
   }
 
-  sendMessage(messageName, message) {
-    const messageBuilder = {};
-    messageBuilder[messageName] = message;
-    this.#worker.postMessage(messageBuilder);
-  }
-
   doOnMessageRecieved(messageName, callback) {
     if(this.#onMessageRecievedEvents[messageName] !== undefined) {
       this.#onMessageRecievedEvents[messageName].push(callback);
@@ -113,6 +90,44 @@ class TaskManager {
     this.#onErrorEvents.push(callback);
   }
 
+  waitForFinish() {
+    if(!this.getIsFinished()) {
+      return new Promise((resolve, reject) => {
+        this.doOnExit((code) => resolve(code));
+        this.doOnError((err) => reject(err));
+      });
+    }
+    return this.getExitCode();
+  }
+
+  waitForFinishOrThrowOnTimeout(timeMS) {
+    return new Promise((resolve, reject) => {
+      const waitProcessPromise = this.waitForFinish();
+      let timeout = setTimeout(() => reject(new Error('thread did not finish before timeout')), timeMS);
+      waitProcessPromise.then((data) => {
+        clearTimeout(timeout);
+        resolve(data);
+      }).catch((err) => {
+        clearTimeout(timeout);
+        reject(err);
+      });
+    });
+  }
+
+  waitForFinishOrReturnOnTimeout(timeMS) {
+    return new Promise((resolve, reject) => {
+      const waitProcessPromise = this.waitForFinish();
+      let timeout = setTimeout(() => resolve(undefined), timeMS);
+      waitProcessPromise.then((data) => {
+        clearTimeout(timeout);
+        resolve(data);
+      }).catch((err) => {
+        clearTimeout(timeout);
+        reject(err);
+      });
+    });
+  }
+
   getID() {
     return this.#worker.threadId;
   }
@@ -123,16 +138,6 @@ class TaskManager {
 
   getWorker() { //added incase user wants to use advanced worker features
     return this.#worker;
-  }
-
-  waitForFinish() {
-    if(!this.#isFinished) {
-      return new Promise((resolve, reject) => {
-        this.doOnExit((code) => resolve(code));
-        this.doOnError((err) => reject(err));
-      });
-    }
-    return this.#exitCode;
   }
 
   getIsOnline() {
@@ -146,10 +151,86 @@ class TaskManager {
   getExitCode() {
     return this.#exitCode;
   }
+
+  setAlias(alias) {
+    if(alias in Object.values(TaskManager.#aliases)) return false;
+    this.#taskAlias = alias;
+    TaskManager.#aliases[this.getID] = alias;
+  }
+
+  getAlias() {
+    return this.#taskAlias;
+  }
 }
 
-const createNewTaskManager = (taskCode) => {
-  return new TaskManager(() => new worker_threads.Worker(taskCode, {eval: true}))
+class MessageTaskManager extends TaskManager {
+  constructor(startWorkerFunc) {
+    super(startWorkerFunc);
+  }
+
+  sendMessage(messageName, message) {
+    const messageBuilder = {};
+    messageBuilder[messageName] = message;
+    this.getWorker().postMessage(messageBuilder);
+  }
+
+  waitForMessageRecieved(messageName) {
+    return new Promise((resolve, reject) => {
+      this.doOnMessageRecieved(messageName, (data) => resolve(data));
+    });
+  }
+
+  waitForMessageRecievedOrThrowOnTimeout(messageName, timeMS) {
+    return new Promise((resolve, reject) => {
+      const waitProcessPromise = this.waitForMessageRecieved(messageName);
+      let timeout = setTimeout(() => reject(new Error('message was not received before timeout')), timeMS);
+      waitProcessPromise.then((data) => {
+        clearTimeout(timeout);
+        resolve(data);
+      }).catch((err) => {
+        clearTimeout(timeout);
+        reject(err);
+      });
+    });
+  }
+
+  waitForMessageRecievedOrReturnOnTimeout(messageName, timeMS) {
+    return new Promise((resolve, reject) => {
+      const waitProcessPromise = this.waitForMessageRecieved(messageName);
+      let timeout = setTimeout(() => resolve(undefined), timeMS);
+      waitProcessPromise.then((data) => {
+        clearTimeout(timeout);
+        resolve(data);
+      }).catch((err) => {
+        clearTimeout(timeout);
+        reject(err);
+      });
+    });
+  }
+}
+
+class EasyTaskManager extends TaskManager{
+  #retVal = undefined;
+  constructor(startWorkerFunc) {
+    super(startWorkerFunc)
+    this.doOnReturn((retVal) => this.#retVal = retVal);
+  }
+
+  doOnReturn(callback) {
+    super.doOnMessageRecieved('return', callback);
+  }
+
+  //override
+  waitForFinish() {
+    if(!this.getIsFinished()) {
+      return new Promise((resolve, reject) => {
+        this.doOnReturn((retVal) => resolve(retVal));
+        this.doOnError((err) => reject(err));
+        this.doOnExit((code) => reject(code)); //if exiting without a return, assume an error occurred
+      });
+    }
+    return this.#retVal;
+  }
 }
 
 class Task {
@@ -180,4 +261,4 @@ class Task {
   }
 }
 
-module.exports = { $t, $et, $tfile, Task };
+module.exports = { $t, $et, $tfile, Task, waitAll, waitAllTasks, waitAny, waitAnyTasks, waitOrThrowOnTimeout, waitOrReturnOnTimeout };
