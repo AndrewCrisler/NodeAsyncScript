@@ -1,4 +1,4 @@
-const { $t, $et, Task } = require('../src/core');
+const { $t, $et, Task, TaskManager, MessageTaskManager, EasyTaskManager } = require('../src/core');
 
 const runThreadAndWait = async (thread) => {
   const returnCode = await thread.waitForFinishOrReturnOnTimeout(3_000);
@@ -62,4 +62,24 @@ myThreads[0].doOnExit((code) => {
 });
 
 runThreadAndWaitForMessage(myThreads[1], 'response');
+
+async function awaitForAllThreadsToFinish(threadArray) {
+  const returnMap = await TaskManager.waitAllTasks(threadArray);
+  console.log(`All of my tasks have finished with the return map: ${JSON.stringify(returnMap)}`);
+}
+
+async function awaitForAnyThreadsToFinish(threadArray) {
+  const returnMap = await TaskManager.waitAnyTasks(threadArray);
+  console.log(`one of my tasks have finished with the return map: ${JSON.stringify(returnMap)}`);
+}
+
+// async function awaitForAnyThreadsToFinishViaPromise() {
+//   const returnMap = await waitAny([$et([40], myTaskCode).waitForFinish(), $et([40], myTaskCode).waitForFinish(), $et([35], myTaskCode).waitForFinish()]);
+//   console.log(`Promise loopback: one of my tasks have finished with the return map: ${JSON.stringify(returnMap)}`);
+// }
+
+const taskManagerArray = [$et([40], myTaskCode), $et([40], myTaskCode), $et([35], myTaskCode)]
+awaitForAllThreadsToFinish(taskManagerArray);
+awaitForAnyThreadsToFinish(taskManagerArray);
+// awaitForAnyThreadsToFinishViaPromise();
 

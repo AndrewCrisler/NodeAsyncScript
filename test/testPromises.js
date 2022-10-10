@@ -1,3 +1,5 @@
+const {waitAll} = require('../src/core');
+
 function getFib(num) {
   // console.log(`here ${num}`)
   if (num === 0) {
@@ -11,16 +13,41 @@ function getFib(num) {
   }
 }
 
-async function calcFib(num) {
-  console.log(`${num} start time: ${process.hrtime()}`);
-  const fib = await new Promise((resolve, reject) => {
-    resolve(getFib(num));
-  });
-  console.log(`${num} end time: ${process.hrtime()}`);
-  console.log(fib);
+async function awaitAllCalcs(promiseArray) {
+  await waitAll(promiseArray);
+  console.log('all calcs have finished!!!');
 }
 
-calcFib(40);
-calcFib(39);
-calcFib(38);
+// async function awaitAnyCalcs(promiseArray) {
+//   promiseArray[0].then((retVal) => console.log('first promise finished'))
+//   await waitAny(promiseArray);
+//   console.log('one calcs have finished!!!');
+// }
+
+async function calcFib(num) {
+  // console.log(`${num} start time: ${process.hrtime()}`);
+  // const fib = await new Promise((resolve, reject) => {
+  //   resolve(getFib(num));
+  // });
+  // console.log(`${num} end time: ${process.hrtime()}`);
+  // console.log(fib);
+  // return fib;
+
+  return new Promise((resolve, reject) => {
+    resolve(getFib(num));
+  });
+}
+
+async function runTests() {
+  // calcFib(40);
+  // calcFib(39);
+  // calcFib(38);
+  const promiseArray = [calcFib(32), calcFib(39), calcFib(42)];
+
+
+  // awaitAllCalcs(promiseArray);
+}
+
+runTests();
+
 

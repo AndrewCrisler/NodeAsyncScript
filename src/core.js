@@ -14,33 +14,52 @@ const $tfile = function(filePath) {
   return new MessageTaskManager(() => new worker_threads.Worker(filePath)); //untested
 }
 
-const waitAll = (promiseArray) => {
+const waitAll = async (promiseArray) => {
+  return new Promise((resolve, reject) => {
+    let promiseStatus = new Array(promiseArray.length).fill(false);
+    let retValArray = new Array(promiseArray.length);
 
+    const promiseComplete = (index, retVal) => {
+      promiseStatus[index] = true;
+      retValArray[index] = retVal;
+      if(!(false in promiseStatus)) resolve(retValArray);
+    }
+    
+    promiseArray.forEach((promiseObject, index) => {
+      promiseObject.then(() => promiseComplete(index)).catch((err) => reject(err));
+    });
+  });
 }
 
-const waitAny = (promiseArray) => {
-
+const waitOrThrowOnTimeout = async (promiseObject, timeMS, timeoutErrorMessage = 'promise did not finish before timeout') => {
+  return new Promise((resolve, reject) => {
+    let timeout = setTimeout(() => reject(new Error(timeoutErrorMessage)), timeMS);
+    promiseObject.then((data) => {
+      clearTimeout(timeout);
+      resolve(data);
+    }).catch((err) => {
+      clearTimeout(timeout);
+      reject(err);
+    });
+  });
 }
 
-const waitAllTasks = (taskManagerArray) => {
-
-}
-
-const waitAnyTasks = (taskManagerArray) => {
-
-}
-
-const waitOrThrowOnTimeout = (promiseObject) => {
-
-}
-
-const waitOrReturnOnTimeout = (promiseObject) => {
-  
+const waitOrReturnOnTimeout = async (promiseObject, timeMS) => {
+  return new Promise((resolve, reject) => {
+    let timeout = setTimeout(() => resolve(undefined), timeMS);
+    promiseObject.then((data) => {
+      clearTimeout(timeout);
+      resolve(data);
+    }).catch((err) => {
+      clearTimeout(timeout);
+      reject(err);
+    });
+  });
 }
 
 class TaskManager {
   static #aliases = {};
-  #taskAlias = undefined;
+  #taskAlias;
 
   #worker = undefined;
   #isOnline = false;
@@ -72,6 +91,7 @@ class TaskManager {
       const key = Object.keys(data)[0];
       this.#onMessageRecievedEvents[key].forEach((callback) => callback(data[key]));
     });
+    this.#taskAlias = this.getID(); //default to id
   }
 
   doOnMessageRecieved(messageName, callback) {
@@ -90,7 +110,7 @@ class TaskManager {
     this.#onErrorEvents.push(callback);
   }
 
-  waitForFinish() {
+  async waitForFinish() {
     if(!this.getIsFinished()) {
       return new Promise((resolve, reject) => {
         this.doOnExit((code) => resolve(code));
@@ -100,30 +120,45 @@ class TaskManager {
     return this.getExitCode();
   }
 
-  waitForFinishOrThrowOnTimeout(timeMS) {
+  async waitForFinishOrThrowOnTimeout(timeMS) { //what if not a promise?
+    return waitOrThrowOnTimeout(this.waitForFinish(), timeMS, 'thread did not finish before timeout');
+  }
+
+  async waitForFinishOrReturnOnTimeout(timeMS) {
+    return waitOrReturnOnTimeout(this.waitForFinish(), timeMS);
+  }
+
+  static async waitAllTasks(taskManagerArray) {
     return new Promise((resolve, reject) => {
-      const waitProcessPromise = this.waitForFinish();
-      let timeout = setTimeout(() => reject(new Error('thread did not finish before timeout')), timeMS);
-      waitProcessPromise.then((data) => {
-        clearTimeout(timeout);
-        resolve(data);
-      }).catch((err) => {
-        clearTimeout(timeout);
-        reject(err);
+      let promiseStatus = [];
+      let retValMap = {};
+  
+      const taskComplete = (retVal, alias) => {
+        promiseStatus.push(alias);
+        retValMap[alias] = retVal;
+        if(promiseStatus.length === taskManagerArray.length){
+          resolve(retValMap);
+        }
+      }
+      
+      taskManagerArray.forEach((taskManager) => {
+        const taskManagerAlias = taskManager.getAlias();
+        taskManager.waitForFinish().then((retVal) => taskComplete(retVal, taskManagerAlias)).catch((err) => reject(err));
       });
     });
   }
 
-  waitForFinishOrReturnOnTimeout(timeMS) {
+  static async waitAnyTasks(taskManagerArray) {
     return new Promise((resolve, reject) => {
-      const waitProcessPromise = this.waitForFinish();
-      let timeout = setTimeout(() => resolve(undefined), timeMS);
-      waitProcessPromise.then((data) => {
-        clearTimeout(timeout);
-        resolve(data);
-      }).catch((err) => {
-        clearTimeout(timeout);
-        reject(err);
+      const taskComplete = (retVal, alias) => {
+        const returnObject = {}
+        returnObject[alias] = retVal;
+        resolve(returnObject);
+      }
+      
+      taskManagerArray.forEach((taskManager, index) => {
+        const taskManagerAlias = taskManager.getAlias();
+        taskManager.waitForFinish().then((retVal) => taskComplete(retVal, taskManagerAlias)).catch((err) => reject(err));
       });
     });
   }
@@ -153,9 +188,11 @@ class TaskManager {
   }
 
   setAlias(alias) {
-    if(alias in Object.values(TaskManager.#aliases)) return false;
-    this.#taskAlias = alias;
-    TaskManager.#aliases[this.getID] = alias;
+    const aliasString = `${alias}`
+    if(aliasString in Object.values(TaskManager.#aliases)) return false;
+    this.#taskAlias = aliasString;
+    TaskManager.#aliases[this.getID] = aliasString;
+    return true;
   }
 
   getAlias() {
@@ -174,36 +211,51 @@ class MessageTaskManager extends TaskManager {
     this.getWorker().postMessage(messageBuilder);
   }
 
-  waitForMessageRecieved(messageName) {
+  async waitForMessageRecieved(messageName) {
     return new Promise((resolve, reject) => {
       this.doOnMessageRecieved(messageName, (data) => resolve(data));
     });
   }
 
-  waitForMessageRecievedOrThrowOnTimeout(messageName, timeMS) {
+  async waitForMessageRecievedOrThrowOnTimeout(messageName, timeMS) {
+    return waitOrThrowOnTimeout(this.waitForMessageRecieved(messageName), timeMS, 'message was not received before timeout');
+  }
+
+  async waitForMessageRecievedOrReturnOnTimeout(messageName, timeMS) {
+    return waitOrReturnOnTimeout(this.waitForMessageRecieved(messageName), timeMS);
+  }
+
+  static async waitAllTasksForMessage(taskManagerArray, messageName) {
     return new Promise((resolve, reject) => {
-      const waitProcessPromise = this.waitForMessageRecieved(messageName);
-      let timeout = setTimeout(() => reject(new Error('message was not received before timeout')), timeMS);
-      waitProcessPromise.then((data) => {
-        clearTimeout(timeout);
-        resolve(data);
-      }).catch((err) => {
-        clearTimeout(timeout);
-        reject(err);
+      let promiseStatus = [];
+      let retValMap = {};
+  
+      const taskComplete = (retVal, alias) => {
+        promiseStatus.push(alias);
+        retValMap[alias] = retVal;
+        if(promiseStatus.length === taskManagerArray.length){
+          resolve(retValMap);
+        }
+      }
+      
+      taskManagerArray.forEach((taskManager) => {
+        const taskManagerAlias = taskManager.getAlias();
+        taskManager.messageName(messageName).then((retVal) => taskComplete(retVal, taskManagerAlias)).catch((err) => reject(err));
       });
     });
   }
 
-  waitForMessageRecievedOrReturnOnTimeout(messageName, timeMS) {
+  static async waitAnyTasksForMessage(taskManagerArray, messageName) {
     return new Promise((resolve, reject) => {
-      const waitProcessPromise = this.waitForMessageRecieved(messageName);
-      let timeout = setTimeout(() => resolve(undefined), timeMS);
-      waitProcessPromise.then((data) => {
-        clearTimeout(timeout);
-        resolve(data);
-      }).catch((err) => {
-        clearTimeout(timeout);
-        reject(err);
+      const taskComplete = (retVal, alias) => {
+        const returnObject = {}
+        returnObject[alias] = retVal;
+        resolve(returnObject);
+      }
+      
+      taskManagerArray.forEach((taskManager, index) => {
+        const taskManagerAlias = taskManager.getAlias();
+        taskManager.waitForMessageRecieved(messageName).then((retVal) => taskComplete(retVal, taskManagerAlias)).catch((err) => reject(err));
       });
     });
   }
@@ -221,7 +273,7 @@ class EasyTaskManager extends TaskManager{
   }
 
   //override
-  waitForFinish() {
+  async waitForFinish() {
     if(!this.getIsFinished()) {
       return new Promise((resolve, reject) => {
         this.doOnReturn((retVal) => resolve(retVal));
@@ -261,4 +313,4 @@ class Task {
   }
 }
 
-module.exports = { $t, $et, $tfile, Task, waitAll, waitAllTasks, waitAny, waitAnyTasks, waitOrThrowOnTimeout, waitOrReturnOnTimeout };
+module.exports = { $t, $et, $tfile, Task, TaskManager, MessageTaskManager, EasyTaskManager, waitAll, waitOrThrowOnTimeout, waitOrReturnOnTimeout };
